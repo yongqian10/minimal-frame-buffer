@@ -71,8 +71,60 @@ architecture rtl of slice_buffer;
     signal real_rd_selector: std_ulogic_vector(max_buffer_row downto 0) := (others => '0');
     signal real_row_selector: u_unsigned(max_buffer_row-1 downto 0) := (others => '0');
     signal rd_ptr_cnt: u_unsigned(dec2bits(max_vga_width)-1 downto 0);
+    signal data_out_channel: u_unsigned_vector(max_buffer_row-1 downto 0)(max_channel*max_pixel_width-1 downto 0);
+    signal three_row_is_complete: std_ulogic := '0';
+    signal new_3_row_is_complete: std_ulogic := '0';
+    signal general_en: std_ulogic := '0';
+    signal start_grouping: std_ulogic := '0';
+    signal i_data_out_by_pixel: u_unsigned(max_channel*max_pixel_width-1 downto 0);
+    signal data_valid_gen_reg: std_ulogic := '0';
+    type sync_gen_fsm_type is (wait_buffer_en, wait_new_frame, idle);
+    signal sync_gen_fsm: sync_gen_fsm_type;
+    signal temp: std_ulogic := '0';
+    signal cnt: natural range 0 to 120 := 0;
+    signal user_reset: std_ulogic := '0';
+
+    signal vga_width: integer range 0 to max_vga_width := 1920;
+    signal vga_height: integer range 0 to max_vga_height := 1080;
+    signal buffer_row: integer range 0 to max_buffer_row := 3;
+    signal pixel_width: integer range 0 to max_pixel_width := 8;
+    signal channel: integer range 0 to max_channel := 3;
+    signal output_chunk_width: integer range 0 to max_output_chunk_width := 15;
+
+    signal pixel_data_in_next: u_unsigned(max_channel*max_pixel_width-1 downto 0) := (others => '0');
+    signal data_valid_next: std_ulogic := '0';
+    signal rd_ptr_cnt_next: u_unsigned(dec2bits(max_vga_width)-1 downto 0) := (others => '0');
+    signal wr_ptr_next: u_unsigned(dec2bits(max_vga_width)-1 downto 0) := (others => '0');
+
+    attribute dont touch    of pix_clk:                 signal is true;
+    attribute dont touch    of reset:                   signal is true;
+    attribute dont touch    of new_frame:               signal is true;
+    attribute dont touch    of data_out_by_pixel:       signal is true;
+    attribute dont touch    of data_valid:              signal is true;
+    attribute dont touch    of pixel_data_in:           signal is true;
+    attribute dont touch    of output_chunk:            signal is true;
+    attribute dont touch    of chunk_valid:             signal is true;
+    attribute dont touch    of data_valid_gen:          signal is true;
+    attribute dont touch    of start_sync_gen:          signal is true;
 
 begin
 
+    dbg_ram_rd_en           <=  ram_rd_en;
+    dbg_wr_ptr              <=  wr_ptr_next;
+    dbg_rd_ptr              <=  rd_ptr;
+    dbg_pixel_data_in_next  <=  pixel_data_in_next;
+    dbg_data_valid_next     <=  data_valid_next;
+    dbg_data_out_ram        <=  data_out_ram;
+    dbg_ram_wr_en           <=  ram_wr_en_reg;
+
+    vga_width           <=  to_integer(u_unsigned(slice_buffer_cfg_interface.frame_width));
+    vga_height          <=  to_integer(u_unsigned(slice_buffer_cfg_interface.frame_height));
+    buffer_row          <=  to_integer(u_unsigned(slice_buffer_cfg_interface.buffer_row));
+    pixel_width         <=  to_integer(u_unsigned(slice_buffer_cfg_interface.pixel_width));
+    channel             <=  to_integer(u_unsigned(slice_buffer_cfg_interface.channel));
+    output_chunk_width  <=  to_integer(u_unsigned(slice_buffer_cfg_interface.output_chunk_width));
+
+    user_reset <= reset or not ap_start;
+    ap_idle <= user_reset;
 
 end architecture rtl;

@@ -127,4 +127,184 @@ begin
     user_reset <= reset or not ap_start;
     ap_idle <= user_reset;
 
+    process(pix_clk) is begin
+        if rising_edge(pix_clk) then
+            if ap_start then
+                ap_ready <= '1';
+            end if;
+        end if;
+    end process;
+
+    process(pix_clk, user_reset) is begin
+        if user_reset then
+            i1_ram_wr_en <= (others => (others => '0'));
+        elsif rising_edge(pix_clk) then
+            i1_ram_wr_en <= i1_ram_wr_en(i1_ram_wr_en'high-1 downto 0) & ram_wr_en;
+        end if;
+    end process;
+
+    process(pix_clk, user_reset) is begin
+        if user_reset then
+            i1_ram_wr_en <= (others => (others => '0'));
+        elsif rising_edge(pix_clk) then
+            i1_ram_wr_en <= i1_ram_wr_en (i1_ram_wr_en'high-1 downto 0) & ram_wr_en;
+        end if;
+    end process;
+
+    i_ram_wr_en <= ram_wr_en and (i1_ram_wr_en(0) xor ram_wr_en);
+
+    u_data_assign: for i in 0 to max_buffer_row generate
+    process(pix_clk, user_reset) is begin
+        if user_reset then
+            data_in_ram(i) <= (others => '0');
+        elsif rising_edge(pix_clk) then
+            data_in_ram(i) <= pixel_data_in_next when ram_wr_en(i) else (others => '0');
+        end if;
+    end process;
+
+    u_ram_gen: for i in 0 to max_buffer_row generate
+        u_ram: entity work.dual_port_ram(rtl)
+            generic map(
+                memoryWidth     =>      max*max_pixel_width,
+                memoryDepth     =>      max_vga_width
+            ) port map(
+                rd_clk          =>      pix_clk,
+                wr_clk          =>      pix_clk,
+                reset           =>      user_reset,
+
+                writeEn         =>      ram_wr_en_reg(i),
+                readEn          =>      ram_rd_en(i),
+
+                writePtr        =>      wr_ptr_next,
+                readPtr         =>      rd_ptr(i),
+
+                d               =>      data_in_ram(i),
+                q               =>      data_out_ram(i)
+            );
+    end generate u_ram_gen;
+
+    process(pix_clk) is begin
+        if rising_edge(pix_clk) then
+            ram_wr_en_reg <= (others => '0');
+            if data_valid_next = '1' and wr_ptr_next < 1920 then
+                ram_wr_en_reg <= ram_wr_en;
+            end if;
+        end if;
+    end process;
+
+    process(user_reset, pix_clk) is begin
+        if user_reset then
+            ram_wr_en <= (others => '0');
+            wr_fsm <= idle;
+        elsif rising_edge(pix_clk) then
+            case(wr_fsm) is
+                when idle =>
+                    if new_frame then
+                        wr_fsm <= w_data_valid;
+                    end if;
+
+                when w_data_valid =>
+                    if new_frame then
+                        ram_wr_en <= (others => '0');
+                    end if;
+
+                    if data_valid then
+                        if ram_wr_en = 0 then
+                            ram_wr_en(max_buffer_row downto 1) <= (others => '0');
+                            ram_wr_en(0) <= '1';
+                        else
+                            ram_wr_en(max_buffer_row downto 0) <= rotate_left(ram_wr_en(max_buffer_row downto 0), 1);
+                        end if;
+                        wr_fsm <= w_not_data_valid;
+                    end if;
+
+                when w_not_data_valid =>
+                    if new_frame then
+                        wr_fsm <= w_data_valid;
+                    end if;
+
+                    if not data_valid then
+                        wr_fsm <= w_data_valid;
+                    end if;
+            end case;
+        end if;
+    end process;
+
+    process(user_reset, new_frame, pix_clk) is begin
+        if user_reset or new_frame then
+            wr_ptr <= (others => '0');
+        elsif rising_edge(pix_clk) then
+            if data_valid then
+                if wr_ptr < max_vga_width then
+                    wr_ptr <= wr_ptr + '1';
+                elsif wr_ptr = max_vga_width then
+                    wr_ptr <= wr_ptr;
+                end if;
+            else
+                wr_ptr <= (others => '0');
+            end if;
+        end if;
+    end process;
+
+    process(user_reset, pix_clk) is begin
+        if user_reset then
+            rd_ptr_cnt <= (others => '0');
+        elsif rising_edge(pix_clk) then
+            rd_ptr_cnt <= (others => '0');
+            if three_row_is_complete = '1' or new_3_row_is_complete = '1' then
+                if data_valid_gen_reg then
+                    if rd_ptr_cnt = max_vga_width then
+                        rd_ptr_cnt <= rd_ptr_cnt + '1';
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process;
+
+    process(all) is begin
+        for i in 0 to max_buffer_row loop
+            if not ram_wr_en(i) then
+                rd_ptr(i) <= (others => '0');
+            else
+                rd_ptr(i) <= rd_ptr_cnt_next;
+            end if;
+        end loop;
+    end process;
+
+    u_rgb1: if max_channel = 3 generate
+        u_rgb2: if output_pixel_mode - 1 generate
+            data_out_by_pixel(2)(max_pixel_width-1 downto 0) <= i_data_out_by_pixel(3*max_pixel_width-1 downto 2*max_pixel_width);
+
+            data_out_by_pixel(0)(max_pixel_width-1 downto 0) <= i_data_out_by_pixel(2*max_pixel_width-1 downto max_pixel_width);
+
+            data_out_by_pixel(1)(max_pixel_width-1 downto 0) <= i_data_out_by_pixel(max_pixel_width-1 downto 0);
+
+            elsif output_pixel_mode = 0 generate
+                data_out_by_pixel(0)(max_*max_pixel_width-1 downto 0) <= i_data_out_by_pixel(max_channel*max_pixel_width-1 downto 0);
+            end generate u_rgb2;
+        elsif max_channel = 1 generate
+            data_out_by_pixel(0)(max_pixel_width-1 downto 0) <= i_data_out_by_pixel(max_pixel_width-1 downto 0);
+    end generate u_rgb1;
+
+    process(all) is begin
+        i_data_out_by_pixel <= (others => '0');
+        if data_valid_gen_reg then
+            if real_row_selector = 0 then
+                if not ram_rd_en(max_buffer_row) then
+                    i_data_out_by_pixel <= data_out_ram(0);
+                elsif not ram_rd_en(0) then
+                    i_data_out_by_pixel <= data_out_ram(1);
+                else
+                    i_data_out_by_pixel <= (others => '0');
+                end if;
+            else
+                i_data_out_by_pixel <= data_out_ram(to_integer(real_row_selector)+1);
+            end if;
+        end if;
+    end process;
+
+--process(all) is begin
+--    ram_rd_en <= (others )
+
+
 end architecture rtl;

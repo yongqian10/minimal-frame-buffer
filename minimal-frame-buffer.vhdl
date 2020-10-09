@@ -303,8 +303,204 @@ begin
         end if;
     end process;
 
---process(all) is begin
---    ram_rd_en <= (others )
+process(all) is begin
+    ram_rd_en <= (others => '0');
+    if data_valid_gen_reg then
+        ram_rd_en <= real_rd_selector;
+    end if;
+end process;
 
+process(user_reset, new_frame, pix_clk) is
+begin
+    if user_reset or new_frame then
+        rs_fsm <= idle;
+        three_row_is_complete <= '0';
+        rd_selector <= (others => '0');
+        row_selector <= (others => '0');
+        within_cycle <= '0';
+        start_grouping >= '0';
+
+    elsif rising_edge(pix_clk) then
+        case(rs_fsm) is
+            when idle =>
+                three_row_is_complete <= '0';
+                rd_selector <= (others => '0');
+                within_cycle <= '0';
+                start_grouping <= '0';
+
+                if i_ram_wr_en(max_buffer_row) then
+                    rs_fsm <= to_cycle;
+                    rd_selector(max_buffer_row-1 downto 0) <= (others => '1');
+                    three_row_is_complete <= '1';
+                end if;
+
+            when to_cycle =>
+                start_grouping <= '1';
+                within_cycle <= '1';
+
+                if general_en then
+                    rd_selector(max_buffer_row downto 0) <= rd_selector(max_buffer_row-1 downto 0) & rd_selector(max_buffer_row);
+                    row_selector <= row_selector + '1';
+
+                    if row_selector = 0 then
+                        temp <= '1';
+                        row_selector <= (others => '0');
+
+                    elsif row_selector >= max_buffer_row-1 then
+                        row_selector <= (others => '0');
+                    end if;
+
+                    if temp = '1' then
+                        temp <= '0';
+                        row_selector <= row_selector + '1';
+                    end if;
+                end if;
+        end case
+    end if;
+end process;
+
+process(user_reset, pix_clk) is begin
+    if user_reset then
+        real_rd_selector <= (others => '0');
+        real_row_selector <= (others => '0');
+
+    elsif rising_edge(pix_clk) then
+        if data_valid_gen_reg then
+            real_rd_selector <= rd_selector;
+            real_row_selector <= row_selector;
+        else
+            real_rd_selector <= (others => '0');
+            real_row_selector <= (others => '0');
+        end if;
+    end if;
+end process;
+
+process(user_reset, pix_clk) is
+begin
+    if user_reset then
+        sync_gen_fsm <= idle;
+        start_sync_gen <= '0';
+        cnt <= 0;
+
+    elsif rising_edge(pix_clk) then
+        case(sync_gen_fsm) is
+            when idle =>
+                if i_ram_wr_en(max_buffer_row) then
+                    sync_gen_fsm <= wait_new_frame;
+                end if;
+
+            when wait_new_frame =>
+                if cnt < 120 then
+                    cnt <= cnt + 1;
+                elsif cnt =120 then
+                    start_sync_gen <= '1';
+                    cnt <= 120;
+                end if;
+
+                if new_frame then
+                    sync_gen_fsm <= wait_buffer_en;
+                end if;
+
+            when wait_buffer_en =>
+                if i_ram_wr_en(max_buffer_row) then
+                    start_sync_gen <= '0';
+                    sync_gen_fsm <= wait_new_frame;
+                end if;
+
+        end case;
+    end if;
+end process;
+
+process(all) is begin
+    if i_ram_wr_en = 0 then
+        general_en <= '1';
+    else
+        general_en <= '0';
+    end if;
+end process;
+
+process(all) is begin
+    if within_cycle then
+        if data_valid = '0' then
+            new_3_row_is_complete <= '0';
+
+        elsif data_valid = '1' then
+            new_3_row_is_complete <= '1';
+        end if;
+    else
+        new_3_row_is_complete <= '0';
+    end if;
+end process;
+
+process(all) is begin
+    data_out_channel <= (others => (others <= '0'));
+    if data_valid_gen_reg then
+        for i in 0 to max_buffer_row-1 loop
+            if i >= max_buffer_row - to_integer(real_row_selector) then
+                data_out_channel(i) <= data_out_channel(i -(max_buffer_row-(to_integer(real_row_selector))));
+            else
+                if ram_rd_en(max_buffer_row) then
+                    data_out_channel(i) <= data_out_ram(to_integer(real_row_selector)+1);
+
+                elsif ram_rd_en(0) then
+                    data_out_channel(i) <= data_out_ram(i);
+
+                else
+                    data_out_channel(i) <= (others => '0');
+                end if;
+            end if;
+        end loop;
+    end if;
+end process;
+
+u_grouper: block is begin
+process(pix_clk) is begin
+    if rising_edge(pix_clk) then
+        ap_valid <= '0';
+        final_chunk_red <= (others => (others => '0'));
+        final_chunk_green <= (others => (others => '0'));
+        final_chunk_blue <= (others => (others => '0'));
+        chunk_valid <= '0';
+        ack_count <= (others => '0');
+        ap_valid <= '0';
+
+        if data_Valud_gen_reg then
+            ap_valid <= '1';
+            final_chunk_red(0) <= final_chunk_red(0)(111 downto 0) & data_out_channel(0)(7 downto 0);
+            final_chunk_green(0) <= final_chunk_green(0)(111 downto 0) & data_out_channel(0)(15 downto 8);
+            final_chunk_blue(0) <= final_chunk_blue(0)(111 downto 0) & data_out_channel(0)(23 downto 16);
+
+            final_chunk_red(1) <= final_chunk_red(1)(111 downto 0) & data_out_channel(1)(7 downto 0);
+            final_chunk_green(1) <= final_chunk_green(1)(111 downto 0) & data_out_channel(1)(15 downto 8);
+            final_chunk_blue(1) <= final_chunk_blue(1)(111 downto 0) & data_out_channel(1)(23 downto 16);
+
+            final_chunk_red(2) <= final_chunk_red(2(111 downto 0) & data_out_channel(2)(7 downto 0);
+            final_chunk_green(2) <= final_chunk_green(2)(111 downto 0) & data_out_channel(2)(15 downto 8);
+            final_chunk_blue(2) <= final_chunk_blue(2)(111 downto 0) & data_out_channel(2)(23 downto 16);
+
+            ack_count <= ack_count + '1';
+            chunk_valid <= '0';
+
+            if ack_count = max_output_chunk_width-1 then
+                chunk_valid <= '1';
+                ack_count <= (others => '0');
+                ap_valid <= '0';
+            end if;
+        end if;
+    end if;
+end process;
+end block u_grouper;
+
+data_valid_gen_reg <= data_valid_gen and not user_reset and start_sync_gen;
+
+--pipeline
+process(pix_clk) is begin
+    if rising_edge(pix_clk) then
+        data_valid_gen <= data_valid;
+        wr_ptr_next <= wr_ptr;
+        pixel_data_in_next <= pixel_data_in;
+        rd_ptr_cnt_next <= rd_ptr_cnt;
+    end if;
+end process;
 
 end architecture rtl;

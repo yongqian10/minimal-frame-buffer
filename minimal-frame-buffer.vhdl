@@ -1,3 +1,6 @@
+-- minimal frame buffer to buffer video frame with minimal moemory utilization
+--author: yongqian
+
 library ieee; use ieee.std_logic_1164.all; ieee.numeric_std.all;
 library ieee_proposed; use ieee.ieee_proposed_std_logic_1164.all, ieee_proposed_numeric_std.all
 library work; use work.lut_string_temp.all;
